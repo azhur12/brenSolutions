@@ -1,0 +1,105 @@
+#!/bin/bash
+
+function get_nic_info {
+    echo "Информация о сетевом интерфейсе:"
+    # Получение названия сетевого интерфейса
+    NIC=$(ip -o link show | awk '{print $2}' | sed 's/://g' | grep -v 'lo')
+    
+    if [[ -z "$NIC" ]]; then
+        echo "Не удалось найти сетевой интерфейс."
+        return
+    fi
+
+    # Модель сетевой карты (если доступно через ethtool)
+    sudo ethtool -i "$NIC" | grep "driver" | awk '{print "Модель: " $2}'
+    
+    # Скорость и дуплекс
+    sudo ethtool "$NIC" | grep -E 'Speed|Duplex'
+    
+    # Физическое подключение (линк)
+    sudo ethtool "$NIC" | grep "Link detected"
+    
+    # MAC адрес
+    ip link show "$NIC" | grep link/ether | awk '{print "MAC адрес: " $2}'
+    
+    echo ""
+}
+
+function get_ipv4_info {
+    echo "Информация о текущей конфигурации IPv4:"
+    # IP адрес, Маска, Шлюз, DNS
+    IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    MASK=$(ip -o -f inet addr show | awk '/scope global/ {print $4}')
+    GATE=$(ip route | grep default | awk '{print $3}')
+    DNS=$(cat /etc/resolv.conf | grep -i "^nameserver" | awk '{print $2}')
+
+    echo "IP адрес: $IP"
+    echo "Маска: $MASK"
+    echo "Шлюз: $GATE"
+    echo "DNS: $DNS"
+    echo ""
+}
+
+function static_ip_config {
+    echo "Настройка сетевого интерфейса для статической конфигурации..."
+    NIC=$(ip -o link show | awk '{print $2}' | sed 's/://g' | grep -v 'lo')
+    
+    if [[ -z "$NIC" ]]; then
+        echo "Не удалось найти сетевой интерфейс."
+        return
+    fi
+
+    sudo ip addr flush dev "$NIC"
+    sudo ip addr add 10.100.0.2/24 dev "$NIC"
+    sudo ip route add default via 10.100.0.1
+    echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+    echo "Сетевой интерфейс настроен на статическую конфигурацию."
+    echo ""
+}
+
+function dhcp_config {
+    echo "Настройка сетевого интерфейса для получения IP через DHCP..."
+    NIC=$(ip -o link show | awk '{print $2}' | sed 's/://g' | grep -v 'lo')
+
+    if [[ -z "$NIC" ]]; then
+        echo "Не удалось найти сетевой интерфейс."
+        return
+    fi
+
+    sudo dhclient -r "$NIC"  # Освобождение предыдущей аренды
+    sudo dhclient "$NIC"     # Получение новой аренды через DHCP
+    echo "Сетевой интерфейс настроен на получение IP через DHCP."
+    echo ""
+}
+
+while true; do
+    echo "Меню:"
+    echo "1. Узнать информацию о сетевой карте"
+    echo "2. Узнать информацию о текущей конфигурации IPv4"
+    echo "3. Настроить статическую IP конфигурацию"
+    echo "4. Настроить динамическую IP конфигурацию (DHCP)"
+    echo "5. Выйти"
+    read -p "Выберите опцию: " option
+
+    case $option in
+        1)
+            get_nic_info
+            ;;
+        2)
+            get_ipv4_info
+            ;;
+        3)
+            static_ip_config
+            ;;
+        4)
+            dhcp_config
+            ;;
+        5)
+            echo "Выход из скрипта..."
+            exit 0
+            ;;
+        *)
+            echo "Неверный выбор. Пожалуйста, попробуйте снова."
+            ;;
+    esac
+done
